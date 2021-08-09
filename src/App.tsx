@@ -63,6 +63,12 @@ function App() {
         // @ts-ignore
         const keycode = ev.code
 
+        //console.log('keycode=' + keycode)
+        //const key: string|null = isKeycodeIMEAlphabet(keycode)
+        //if (!key) {
+        //    ime.current.clearComposing()
+        //}
+
         let controlKey: 'Backspace'|'Enter'|'Space'|null = null
         let alphabetKey: string|null = null
         if (keycode === 'Backspace' || keycode === 'Enter' || keycode === 'Space') {
@@ -124,15 +130,14 @@ function App() {
     return (
         <div className='App'>
             <textarea ref={inputRef} onKeyDown={onKeyDownHandler} value={inputText} style={{fontSize:'20pt'}} rows={10}></textarea>
-            <p style={{top:imeCandidateDiv.top, left: imeCandidateDiv.left, position:'absolute', fontSize:'60%', transform:'scaleY(0.9)', lineHeight:'100%', margin:0, backgroundColor:'lightgray'}}>
+            <p style={{top:imeCandidateDiv.top, left: imeCandidateDiv.left, position:'absolute', fontSize:'75%', transform:'scaleY(0.9)', lineHeight:'100%', margin:0, backgroundColor:'lightgray'}}>
                 {
-                    // @ts-ignore
                     [ ...imeCandidateDiv.progressString ].map(c => {
                         return <>{c}<br /></>
                     })
                 }
             </p>
-            <div style={{top:imeCandidateDiv.topPlusHeight, left:`calc(${imeCandidateDiv.left}px + 1ch)`, position:'absolute', display:'flex', alignItems:'flex-start'}}>
+            <div style={{top:imeCandidateDiv.topPlusHeight, left:`calc(${imeCandidateDiv.left}px + 1.5ch)`, position:'absolute', display:'flex', alignItems:'flex-start'}}>
                 <ButtonGroup color='primary' variant='contained'>
                     {
                         imeCandidateDiv.candidateList.map((candidate, i) => {
@@ -225,22 +230,16 @@ class IME {
         console.log(`candidates=${JSON.stringify(candidates)}`)
         if (candidates == null || candidates.length === 0) {
             this.setComposingString(this.composingString)
-            // @ts-ignore
-            this.progressString = [...this.composingKeys].map(c => cangjieLookup[c]).join('')
-            return
+        } else {
+            this.candidateList = candidates.map((c,i) => ({
+                value: c,
+                selectorKey: i+'',
+                selectorKeyVisual: i+'',
+            }))
+            this.setComposingString(candidates[0])
         }
 
-        this.candidateList = candidates.map((c,i) => ({
-            value: c,
-            selectorKey: i+'',
-            selectorKeyVisual: i+'',
-        }))
-
-        // @ts-ignore
-        this.progressString = [...this.composingKeys].map(c => cangjieLookup[c][0]).join('')
-        this.setComposingString(candidates[0])
-
-        console.log('progressString=' + this.progressString)
+        this.progressString = [...this.composingKeys].map(c => basicShapesLookup[c]||'').join('')
     }
 
     private _commit() {
@@ -258,6 +257,51 @@ class IME {
         }
         return { composing: this.composingString, composing_prev: this.composingStringPrev, commit: commitString }
     }
+}
+
+/**
+ * The keycodes the IME understands. Keycodes not in this alphabet are completely ignored.
+ */
+const isKeycodeIMEAlphabet = (keycode: string) => {
+    const controlKeycodes = [ 'Enter', 'Space', 'Backspace' ]
+    if (keycode.startsWith('Digit')) {
+        return keycode.slice('Digit'.length)
+    } else if (keycode.length === 4 && keycode >= 'KeyA' && keycode <= 'KeyZ') {
+        return keycode.slice('Key'.length)
+    } else if (controlKeycodes.includes(keycode)) {
+        return keycode
+    } else {
+        return null
+    }
+}
+
+const basicShapesLookup: {[key:string]:string} = {
+  'a': '日',
+  'b': '月',
+  'c': '金',
+  'd': '木',
+  'e': '水',
+  'f': '火',
+  'g': '土',
+  'h': '竹',
+  'i': '戈',
+  'j': '十',
+  'k': '大',
+  'l': '中',
+  'm': '一',
+  'n': '弓',
+  'o': '人',
+  'p': '心',
+  'q': '手',
+  'r': '口',
+  's': '尸',
+  't': '廿',
+  'u': '山',
+  'v': '女',
+  'w': '田',
+  'x': '難',
+  'y': '卜',
+  'z': '重',
 }
 
 export default App

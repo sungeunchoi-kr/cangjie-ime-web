@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es5",
+    "target": "es6",
     "lib": [
       "es6",
       "dom",
@@ -23,6 +23,7 @@
 
     "noImplicitAny": true,
     "noImplicitThis": true,
+    "downlevelIteration": true,
   },
   "include": [
     "src"
