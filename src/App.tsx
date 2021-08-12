@@ -127,9 +127,15 @@ function App() {
         set_imeUpdateKey({})
     }
 
+    const textareaStyle = {
+        fontFamily: `"Yu Gothic Light", "Meiryo", sans-serif`,
+        fontSize: '32pt',
+        width: '90%'
+    }
+
     return (
         <div className='App'>
-            <textarea ref={inputRef} onKeyDown={onKeyDownHandler} value={inputText} style={{fontSize:'20pt'}} rows={10}></textarea>
+            <textarea ref={inputRef} onKeyDown={onKeyDownHandler} value={inputText} style={textareaStyle} rows={10}></textarea>
             <p style={{top:imeCandidateDiv.top, left: imeCandidateDiv.left, position:'absolute', fontSize:'75%', transform:'scaleY(0.9)', lineHeight:'100%', margin:0, backgroundColor:'lightgray'}}>
                 {
                     [ ...imeCandidateDiv.progressString ].map(c => {
