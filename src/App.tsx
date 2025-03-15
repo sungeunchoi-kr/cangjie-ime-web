@@ -1,313 +1,253 @@
-import React, { useEffect, useRef, useState } from 'react'
-import logo from './logo.svg'
+import { useCallback, useState } from 'react'
 import './App.css'
-import Input from '@material-ui/core/Input'
-// @ts-ignore
-import getCaretCoordinates from 'textarea-caret'
+import cjtable from './cangjie_table.json'
 
-import cangjieLookup from './cangjie-lookup.json'
-import ButtonGroup from '@material-ui/core/ButtonGroup'
-import Button from '@material-ui/core/Button'
+type ImeComposingState = {
+    memory: string
+    text: string
+    candidates: string[]
+}
 
-interface IMEViewData {
-    top: number|string
-    left: number|string,
-    height: number|string,
-    topPlusHeight: number|string,
-    progressString: string
-    candidateList: CandidateListItem[]
+function newImeComposingState(): ImeComposingState {
+    return {
+        memory: '',
+        text: '',
+        candidates: []
+    }
+}
+
+function getRepresentativeKeys(keys: string) {
+    let rep = ''
+    for (const k of keys) {
+        try {
+            const ck = (cjtable as Record<string, string[]>)[k][0]
+            rep += ck
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        } catch (_e) {
+            rep += '?'
+        }
+    }
+    return rep
+}
+
+/**
+ * returns x, y coordinates for absolute positioning of a span within a given text input
+ * at a given selection point
+ * @param {object} input - the input element to obtain coordinates for
+ * @param {number} selectionPoint - the selection point for the input
+ */
+const getCursorXY = (input: HTMLTextAreaElement, selectionPoint: number) => {
+    const {
+        offsetLeft: inputX,
+        offsetTop: inputY,
+    } = input
+    // create a dummy element that will be a clone of our input
+    const div = document.createElement('div')
+    // get the computed style of the input and clone it onto the dummy element
+    const copyStyle = getComputedStyle(input)
+    for (const prop of copyStyle) {
+        // @ts-expect-error - style copy
+        div.style[prop] = copyStyle[prop]
+    }
+    // we need a character that will replace whitespace when filling our dummy element if it's a single line <input/>
+    const swap = '.'
+    const inputValue = input.tagName === 'INPUT' ? input.value.replace(/ /g, swap) : input.value
+    // set the div content to that of the textarea up until selection
+    const textContent = inputValue.substr(0, selectionPoint)
+    // set the text content of the dummy element div
+    div.textContent = textContent
+    if (input.tagName === 'TEXTAREA') div.style.height = 'auto'
+    // if a single line input then the div needs to be single line and not break out like a text area
+    if (input.tagName === 'INPUT') div.style.width = 'auto'
+    // create a marker element to obtain caret position
+    const span = document.createElement('span')
+    // give the span the textContent of remaining content so that the recreated dummy element is as close as possible
+    span.textContent = inputValue.substr(selectionPoint) || '.'
+    // append the span marker to the div
+    div.appendChild(span)
+    // append the dummy element to the body
+    document.body.appendChild(div)
+    // get the marker position, this is the caret position top and left relative to the input
+    const { offsetLeft: spanX, offsetTop: spanY } = span
+    // lastly, remove that dummy element
+    // NOTE:: can comment this out for debugging purposes if you want to see where that span is rendered
+    document.body.removeChild(div)
+    // return an object with the x and y of the caret. account for input positioning so that you don't need to wrap the input
+    return {
+        x: inputX + spanX,
+        y: inputY + spanY,
+    }
+}
+
+function getCursorPosition(event: React.SyntheticEvent<HTMLTextAreaElement>) {
+    const textarea = event.currentTarget;
+
+    const {
+        offsetLeft,
+        offsetTop,
+        offsetHeight,
+        offsetWidth,
+        scrollLeft,
+        scrollTop,
+        selectionEnd,
+    } = textarea
+    // get style property values that we are interested in
+    const { lineHeight, paddingRight } = getComputedStyle(textarea)
+    // get the caret X and Y from our helper function
+    const { x, y } = getCursorXY(textarea, selectionEnd)
+    // set the marker positioning
+    // for the left positioning we ensure that the maximum left position is the width of the input minus the right padding using Math.min
+    // we also account for current scroll position of the input
+    const newLeft = Math.min(
+        x - scrollLeft,
+        (offsetLeft + offsetWidth) - parseInt(paddingRight, 10)
+    )
+    // for the top positioning we ensure that the maximum top position is the height of the input minus line height
+    // we also account for current scroll position of the input
+    const newTop = Math.min(
+        y - scrollTop,
+        (offsetTop + offsetHeight) - parseInt(lineHeight, 10)
+    )
+
+    return {
+        top: newTop - 5,
+        left: newLeft,
+    }
+}
+
+const imeCompose = (state: ImeComposingState | null, incomingKey: string, controlKey: 'backspace' | null) => {
+    const nextState = state ? { ...state } : newImeComposingState()
+
+    if (incomingKey) {
+        nextState.memory += incomingKey
+    } else if (controlKey === 'backspace') {
+        nextState.memory = nextState.memory.slice(0, -1)
+    }
+
+    if (nextState.memory.length === 0) {
+        return null
+    }
+
+    // derive value from memory
+    let cand = (cjtable as Record<string, string[]>)[nextState.memory]
+    if (!cand || cand.length === 0) {
+        // Find the closest matching key by appending a character to memory
+        // and checking if it exists in the table, until we find a match
+        cand = []
+        for (let i = 0; i < 26; i++) {
+            const k = nextState.memory + String.fromCharCode(97 + i)
+            const c = (cjtable as Record<string, string[]>)[k]
+            if (c && c.length > 0) {
+                cand = cand.concat(c)
+                if (cand.length > 10) {
+                    break
+                }
+            }
+        }
+    }
+    if (cand && cand.length > 0) {
+        nextState.text = cand[0]
+        nextState.candidates = cand
+    }
+
+    return nextState
 }
 
 function App() {
-
-    const [ inputText, set_inputText ] = useState<string>('12345')
-    const [ selectionEnd, set_selectionEnd ] = useState<number>(0)
-    const [ imeUpdateKey, set_imeUpdateKey ] = useState<{}>({})
-    const [ imeCandidateDiv, set_imeCandidateDiv ] = useState<IMEViewData>({top:0, left:0, height:0, topPlusHeight:0, progressString:'', candidateList:[]})
-
-    const inputRef = useRef<HTMLTextAreaElement>(null)
-    const caretPosition = useRef<number>(0)
-    const ime = useRef<IME>(new IME())
-
-    console.log('rendering')
-
-    useEffect(() => {
-    }, [])
-
-    useEffect(() => {
-        if (inputRef.current && caretPosition.current != null) {
-            console.log(`set selectioStart to ${caretPosition.current}.`)
-            inputRef.current.selectionStart = caretPosition.current
-            inputRef.current.selectionEnd = caretPosition.current
-
-            const { top, left } = getCaretCoordinates(inputRef.current, caretPosition.current)
-            const rect = inputRef.current.getBoundingClientRect()
-            
-            //const style = window.getComputedStyle(inputRef.current)
-            //const lineHeight = style.getPropertyValue('line-height')
-            //console.log('lineHeight=' + lineHeight)
-            //const topOffset = 0 //rect.height
-
-            set_imeCandidateDiv({
-                top: `calc(${top}px + ${rect.top}px)`,
-                left: left + rect.left,
-                height: '20pt',
-                topPlusHeight: `calc(${top}px + ${rect.top}px + 20pt)`,
-                progressString: ime.current.progressString,
-                candidateList: ime.current.candidateList,
-            })
-        }
-    }, [inputText, imeUpdateKey])
-
-    const onKeyDownHandler = (ev: React.KeyboardEvent<HTMLTextAreaElement>) => {
-        // @ts-ignore
-        const keycode = ev.code
-
-        //console.log('keycode=' + keycode)
-        //const key: string|null = isKeycodeIMEAlphabet(keycode)
-        //if (!key) {
-        //    ime.current.clearComposing()
-        //}
-
-        let controlKey: 'Backspace'|'Enter'|'Space'|null = null
-        let alphabetKey: string|null = null
-        if (keycode === 'Backspace' || keycode === 'Enter' || keycode === 'Space') {
-            controlKey = keycode
-        } else if (keycode.length === 4 && keycode >= 'KeyA' && keycode <= 'KeyZ') {
-            alphabetKey = keycode.slice(3)
-        } else {
-            ime.current.clearComposing()
-            return
-        }
-
-        ev.preventDefault()
-
-        const i = inputRef.current?.selectionEnd || 0
-        let imeResult: IMEResult|null = null;
-        if (controlKey === 'Backspace') {
-            if (ime.current.isComposing()) {
-                imeResult = ime.current.typeControlKey(controlKey)
-            } else {
-                // regular backspace
-                caretPosition.current = i - 1
-                set_inputText( [ inputText.slice(0, i-1), '', inputText.slice(i) ].join('') )
-                return
-            }
-        } else if (controlKey === 'Space') {
-            if (ime.current.isComposing()) {
-                imeResult = ime.current.typeControlKey(controlKey)
-            } else {
-                // regular space
-                caretPosition.current = i + 1
-                set_inputText( [ inputText.slice(0, i), ' ', inputText.slice(i) ].join('') )
-                return
-            }
-        } else if (alphabetKey) {
-            imeResult = ime.current.typeKeyCode(alphabetKey)
-        } else {
-            console.log('unrecognized')
-            return
-        }
-
-        if (imeResult) {
-            applyIMEResult(imeResult)
-        }
-    }
-
-    const applyIMEResult = (imeResult: IMEResult) => {
-        const i = inputRef.current?.selectionEnd || 0
-
-        const { composing, composing_prev, commit } = imeResult
-        console.log(`${JSON.stringify({ composing, composing_prev, commit })}`)
-        console.log(`${inputText}.slice(${i+composing_prev.length}) = ` + inputText.slice(i+composing_prev.length))
-        let inputText_next = inputText
-        inputText_next = [ inputText.slice(0, i-composing_prev.length), composing+commit, inputText.slice(i) ].join('')
-        caretPosition.current = i + (composing.length - composing_prev.length) + commit.length
-        set_inputText(inputText_next)
-        set_imeUpdateKey({})
-    }
-
-    const textareaStyle = {
-        fontFamily: `"Yu Gothic Light", "Meiryo", sans-serif`,
-        fontSize: '32pt',
-        width: '90%'
-    }
-
     return (
-        <div className='App'>
-            <textarea ref={inputRef} onKeyDown={onKeyDownHandler} value={inputText} style={textareaStyle} rows={10}></textarea>
-            <p style={{top:imeCandidateDiv.top, left: imeCandidateDiv.left, position:'absolute', fontSize:'75%', transform:'scaleY(0.9)', lineHeight:'100%', margin:0, backgroundColor:'lightgray'}}>
-                {
-                    [ ...imeCandidateDiv.progressString ].map(c => {
-                        return <>{c}<br /></>
-                    })
-                }
-            </p>
-            <div style={{top:imeCandidateDiv.topPlusHeight, left:`calc(${imeCandidateDiv.left}px + 1.5ch)`, position:'absolute', display:'flex', alignItems:'flex-start'}}>
-                <ButtonGroup color='primary' variant='contained'>
-                    {
-                        imeCandidateDiv.candidateList.map((candidate, i) => {
-                            if (i === 0) return null
-                            return (
-                                <Button
-                                    style={{padding:'0.1rem 0.75rem'}}
-                                    onClick={() => {
-                                        const imeResult = ime.current.selectFromCandidateList(candidate)
-                                        applyIMEResult(imeResult)
-                                        inputRef.current?.focus()
-                                    }}
-                                >
-                                    <span style={{fontSize:'75%',marginRight:'0.75ch'}}>{candidate.selectorKeyVisual}</span>
-                                    {candidate.value}
-                                </Button>
-                            )
-                        })
-                    }
-                </ButtonGroup>
-            </div>
+        <div className="bg-gray-900 text-white flex items-center justify-center p-4">
+            <CangJieTextArea className="w-full max-w-4xl h-96 p-4 bg-gray-800 border border-gray-700 rounded-lg shadow-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                fontSize={20} />
         </div>
     )
 }
 
-type IMEResult = { composing: string, composing_prev: string, commit: string }
-type CandidateListItem = { value: string, selectorKey: string, selectorKeyVisual: string }
-class IME {
+function CangJieTextArea({
+    className,
+    fontSize = 16,
+}: {
+    className?: string
+    fontSize?: number
+}) {
+    const [imeComposingValue, setImeComposingValue] = useState<ImeComposingState | null>(null)
+    const [value, setValue] = useState('')
+    const [cursorPosition, setCursorPosition] = useState<{ top: number; left: number } | null>(null)
 
-    public composingKeys: string = ''
-    public composingString: string = ''
-    public composingStringPrev: string = ''
-    public commitString: string = ''
+    const isImeComposing = imeComposingValue !== null
 
-    public progressString: string = ''
-    public candidateList: CandidateListItem[] = []
-
-    setComposingString(s: string) {
-        this.composingStringPrev = this.composingString + ''
-        this.composingString = s
-    }
-
-    typeKeyCode(key: string): IMEResult {
-        key = key.toLocaleLowerCase('en-US')
-        console.log({ composingKeys: this.composingKeys, composingString: this.composingString })
-        this.composingKeys += key
-        this._transform()
-        return this._toIMEResult()
-    }
-
-    typeControlKey(key: 'Enter'|'Space'|'Backspace'): IMEResult {
-        console.log({ composingKeys: this.composingKeys, composingString: this.composingString })
-        if (key === 'Enter' || key === 'Space') {
-            this._commit()
-        } else if (key === 'Backspace') {
-            this.composingKeys = this.composingKeys.slice(0, this.composingKeys.length-1)
-            this._transform()
+    const imeCommit = () => {
+        if (imeComposingValue) {
+            setValue(v => v + imeComposingValue.text)
+            setImeComposingValue(null)
         }
-
-        return this._toIMEResult()
     }
 
-    selectFromCandidateList(selection: CandidateListItem): IMEResult {
-        this.setComposingString(selection.value)
-        this._commit()
-        return this._toIMEResult()
-    }
+    const handleSelect = useCallback((event: React.SyntheticEvent<HTMLTextAreaElement>) => {
+        setCursorPosition(getCursorPosition(event))
+    }, [])
 
-    isComposing(): boolean {
-        return this.composingKeys.length > 0
-    }
-
-    clearComposing(): void {
-        this.composingKeys = ''
-        this.composingString = ''
-        this.composingStringPrev = ''
-        this.commitString = ''
-        this.progressString = ''
-    }
-
-    private _transform() {
-        if (this.composingKeys === '') {
-            this.setComposingString('')
-            this.progressString = ''
+    const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (event.code === 'Space') {
+            imeCommit()
+            return
+        } else if (event.code === 'Backspace') {
+            if (imeComposingValue) {
+                setImeComposingValue(s => imeCompose(s, '', 'backspace'))
+            } else {
+                setValue(v => v.slice(0, -1))
+            }
+            return
+        } else if (event.code === 'Enter') {
+            imeCommit()
+            setValue(v => v + '\n')
             return
         }
 
-        // @ts-ignore
-        const candidates: string[]|null = cangjieLookup[this.composingKeys]
-        console.log(`candidates=${JSON.stringify(candidates)}`)
-        if (candidates == null || candidates.length === 0) {
-            this.setComposingString(this.composingString)
-        } else {
-            this.candidateList = candidates.map((c,i) => ({
-                value: c,
-                selectorKey: i+'',
-                selectorKeyVisual: i+'',
-            }))
-            this.setComposingString(candidates[0])
+        const key = event.code.replace('Key', '').toLowerCase()
+
+        if (key && key.length === 1 && key >= 'a' && key <= 'z') {
+            setImeComposingValue(s => {
+                const newState = imeCompose(s, key, null)
+                return newState
+            })
+            return
         }
-
-        this.progressString = [...this.composingKeys].map(c => basicShapesLookup[c]||'').join('')
     }
 
-    private _commit() {
-        this.commitString = this.composingString + ''
-        this.setComposingString('')
-        this.composingKeys = ''
-        this.progressString = ''
-        this.candidateList = []
-    }
+    return (
+        <div className="w-full">
+            <div>
+                <p>Cursor Position (X, Y): ({cursorPosition?.top.toFixed(2)}, {cursorPosition?.left.toFixed(2)})</p>
+            </div>
+            <textarea
+                className={'relative ' + className}
+                style={{ fontSize: fontSize + 'px' }}
+                onKeyDown={handleKeyDown}
+                onSelect={handleSelect}
+                value={value}
+            />
 
-    private _toIMEResult(): IMEResult {
-        const commitString = this.commitString
-        if (this.commitString) {
-            this.commitString = ''
-        }
-        return { composing: this.composingString, composing_prev: this.composingStringPrev, commit: commitString }
-    }
-}
-
-/**
- * The keycodes the IME understands. Keycodes not in this alphabet are completely ignored.
- */
-const isKeycodeIMEAlphabet = (keycode: string) => {
-    const controlKeycodes = [ 'Enter', 'Space', 'Backspace' ]
-    if (keycode.startsWith('Digit')) {
-        return keycode.slice('Digit'.length)
-    } else if (keycode.length === 4 && keycode >= 'KeyA' && keycode <= 'KeyZ') {
-        return keycode.slice('Key'.length)
-    } else if (controlKeycodes.includes(keycode)) {
-        return keycode
-    } else {
-        return null
-    }
-}
-
-const basicShapesLookup: {[key:string]:string} = {
-  'a': '日',
-  'b': '月',
-  'c': '金',
-  'd': '木',
-  'e': '水',
-  'f': '火',
-  'g': '土',
-  'h': '竹',
-  'i': '戈',
-  'j': '十',
-  'k': '大',
-  'l': '中',
-  'm': '一',
-  'n': '弓',
-  'o': '人',
-  'p': '心',
-  'q': '手',
-  'r': '口',
-  's': '尸',
-  't': '廿',
-  'u': '山',
-  'v': '女',
-  'w': '田',
-  'x': '難',
-  'y': '卜',
-  'z': '重',
+            {isImeComposing && cursorPosition && (
+                <div
+                    className="absolute z-10 bg-gray-700 rounded px-1 py-1"
+                    style={{
+                        top: cursorPosition.top,
+                        left: cursorPosition.left,
+                        fontSize: (fontSize + 1) + 'px',
+                    }}
+                >
+                    <div className="flex gap-1">
+                        {imeComposingValue.candidates.map((candidate, i) => (
+                            <span key={i} className={i === 0 ? '' : 'text-blue-400'}>
+                                {candidate}
+                            </span>
+                        ))}
+                    </div>
+                    <div className='text-sm text-left'>{getRepresentativeKeys(imeComposingValue.memory)}</div>
+                </div>
+            )}
+        </div>
+    )
 }
 
 export default App
