@@ -2,23 +2,32 @@ import { useCallback, useState } from 'react'
 import './App.css'
 import cjtable from './cangjie_table.json'
 
-type ImeComposingState = {
+type ImeState = {
     memory: string
     text: string
     candidates: string[]
 }
 
-function newImeComposingState(): ImeComposingState {
+function newImeState(): ImeState {
     return {
         memory: '',
         text: '',
-        candidates: []
+        candidates: [],
     }
 }
 
 function getRepresentativeKeys(keys: string) {
     let rep = ''
+
     for (const k of keys) {
+        if (k === 'z') {
+            rep += '*'
+            continue
+        } else if (k === 'x') {
+            rep += '難'
+            continue
+        }
+
         try {
             const ck = (cjtable as Record<string, string[]>)[k][0]
             rep += ck
@@ -115,49 +124,105 @@ function getCursorPosition(event: React.SyntheticEvent<HTMLTextAreaElement>) {
     }
 }
 
-const imeCompose = (state: ImeComposingState | null, incomingKey: string, controlKey: 'backspace' | null) => {
-    const nextState = state ? { ...state } : newImeComposingState()
+type Digits = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
+
+const queryTable = (key: string) => {
+    const cands = (cjtable as Record<string, string[]>)[key]
+    if (!cands || cands.length === 0) {
+        return []
+    }
+    return cands.filter(c => c.length <= 1)
+}
+
+const imeCompose = (state: ImeState | null, incomingKey: string, controlKey: 'backspace' | Digits | null): [ImeState, string] => {
+    const nextState = state ? { ...state } : newImeState()
 
     if (incomingKey) {
         nextState.memory += incomingKey
     } else if (controlKey === 'backspace') {
         nextState.memory = nextState.memory.slice(0, -1)
+    } else if (controlKey && controlKey.length === 1 && controlKey >= '1' && controlKey <= '9') {
+        // get the nth candidate
+        const i = parseInt(controlKey)
+        const selection = (state?.candidates || [])[i - 1]
+        if (selection) {
+            nextState.text = selection
+            return [nextState, 'commit']
+        } else {
+            return [nextState, '']
+        }
     }
 
     if (nextState.memory.length === 0) {
-        return null
+        nextState.text = ''
+        return [nextState, 'commit']
     }
 
     // derive value from memory
-    let cand = (cjtable as Record<string, string[]>)[nextState.memory]
-    if (!cand || cand.length === 0) {
+    let cands = queryTable(nextState.memory)
+    if (!cands || cands.length === 0) {
         // Find the closest matching key by appending a character to memory
         // and checking if it exists in the table, until we find a match
-        cand = []
+        cands = []
         for (let i = 0; i < 26; i++) {
             const k = nextState.memory + String.fromCharCode(97 + i)
-            const c = (cjtable as Record<string, string[]>)[k]
-            if (c && c.length > 0) {
-                cand = cand.concat(c)
-                if (cand.length > 10) {
+            const cs = queryTable(k)
+            if (cs && cs.length > 0) {
+
+                cands = cands.concat(cs)
+                if (cands.length > 10) {
                     break
                 }
             }
         }
     }
-    if (cand && cand.length > 0) {
-        nextState.text = cand[0]
-        nextState.candidates = cand
+
+    if (cands && cands.length > 0) {
+        nextState.text = cands[0]
+        nextState.candidates = cands.slice(1)
     }
 
-    return nextState
+    return [nextState, '']
 }
 
 function App() {
+    const [fontSize, setFontSize] = useState(20)
+
     return (
-        <div className="bg-gray-900 text-white flex items-center justify-center p-4">
+        <div className="bg-gray-900 text-white flex flex-col items-center justify-center p-4 gap-4">
             <CangJieTextArea className="w-full max-w-4xl h-96 p-4 bg-gray-800 border border-gray-700 rounded-lg shadow-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
-                fontSize={20} />
+                fontSize={fontSize} />
+            <FontSizeInput fontSize={fontSize} setFontSize={setFontSize} />
+        </div>
+    )
+}
+
+function FontSizeInput({
+    fontSize,
+    setFontSize,
+}: {
+    fontSize: number
+    setFontSize: (fontSize: number) => void
+}) {
+    const commonSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 42, 48, 56, 64, 72, 96, 128]
+
+    return (
+        <div className="flex items-center gap-2">
+            <label htmlFor="fontSize">Font Size:</label>
+            <div className="flex items-center gap-2">
+                <select
+                    id="fontSize"
+                    value={fontSize}
+                    onChange={(e) => setFontSize(parseInt(e.target.value))}
+                    className="w-24 px-2 py-1 bg-gray-800 border border-gray-700 rounded"
+                >
+                    {commonSizes.map(size => (
+                        <option key={size} value={size}>
+                            {size}px
+                        </option>
+                    ))}
+                </select>
+            </div>
         </div>
     )
 }
@@ -169,16 +234,16 @@ function CangJieTextArea({
     className?: string
     fontSize?: number
 }) {
-    const [imeComposingValue, setImeComposingValue] = useState<ImeComposingState | null>(null)
+    const [imeState, setImeState] = useState<ImeState | null>(null)
     const [value, setValue] = useState('')
     const [cursorPosition, setCursorPosition] = useState<{ top: number; left: number } | null>(null)
 
-    const isImeComposing = imeComposingValue !== null
+    const isImeComposing = imeState !== null
 
-    const imeCommit = () => {
-        if (imeComposingValue) {
-            setValue(v => v + imeComposingValue.text)
-            setImeComposingValue(null)
+    const imeCommit = (s: ImeState | null) => {
+        if (s) {
+            setValue(v => v + s.text)
+            setImeState(null)
         }
     }
 
@@ -188,37 +253,56 @@ function CangJieTextArea({
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
         if (event.code === 'Space') {
-            imeCommit()
+            imeCommit(imeState)
             return
         } else if (event.code === 'Backspace') {
-            if (imeComposingValue) {
-                setImeComposingValue(s => imeCompose(s, '', 'backspace'))
+            if (imeState) {
+                setImeState(s => {
+                    const [newState, action] = imeCompose(s, '', 'backspace')
+                    if (action === 'commit') {
+                        imeCommit(newState)
+                    }
+                    return newState
+                })
             } else {
                 setValue(v => v.slice(0, -1))
             }
             return
         } else if (event.code === 'Enter') {
-            imeCommit()
+            imeCommit(imeState)
             setValue(v => v + '\n')
             return
         }
 
-        const key = event.code.replace('Key', '').toLowerCase()
+        let key = event.code.replace('Key', '').toLowerCase()
+        key = key.replace('digit', '').toLowerCase()
 
         if (key && key.length === 1 && key >= 'a' && key <= 'z') {
-            setImeComposingValue(s => {
-                const newState = imeCompose(s, key, null)
-                return newState
-            })
+            const s = imeState
+            const [newState, action] = imeCompose(s, key, null)
+            if (action === 'commit') {
+                imeCommit(newState)
+                return null
+            }
+            setImeState(newState)
+            return
+        } else if (key && key.length === 1 && key >= '1' && key <= '9') {
+            const s = imeState
+            const [newState, action] = imeCompose(s, '', key as Digits)
+            if (action === 'commit') {
+                imeCommit(newState)
+                return null
+            }
+            setImeState(newState)
             return
         }
     }
 
     return (
         <div className="w-full">
-            <div>
+            {/* <div>
                 <p>Cursor Position (X, Y): ({cursorPosition?.top.toFixed(2)}, {cursorPosition?.left.toFixed(2)})</p>
-            </div>
+            </div> */}
             <textarea
                 className={'relative ' + className}
                 style={{ fontSize: fontSize + 'px' }}
@@ -229,21 +313,31 @@ function CangJieTextArea({
 
             {isImeComposing && cursorPosition && (
                 <div
-                    className="absolute z-10 bg-gray-700 rounded px-1 py-1"
+                    className="absolute z-10 rounded pl-0 pr-1 py-1"
                     style={{
                         top: cursorPosition.top,
                         left: cursorPosition.left,
                         fontSize: (fontSize + 1) + 'px',
+                        width: '8ch',
                     }}
                 >
+                    <div className='absolute top-[-10px] text-sm bg-gray-700 rounded text-left px-[2px]'>{getRepresentativeKeys(imeState.memory)}</div>
+
                     <div className="flex gap-1">
-                        {imeComposingValue.candidates.map((candidate, i) => (
-                            <span key={i} className={i === 0 ? '' : 'text-blue-400'}>
-                                {candidate}
-                            </span>
-                        ))}
+                        {imeState.text && (
+                            <span>{imeState.text}</span>
+                        )}
                     </div>
-                    <div className='text-sm text-left'>{getRepresentativeKeys(imeComposingValue.memory)}</div>
+
+                    {imeState.candidates.length > 0 && (
+                        <div className='flex flex-col items-start leading-[1.1] text-[18px] bg-gray-700 rounded py-[2px] px-1 max-h-[15vh] sm:max-h-[20vh] md:max-h-[25vh] overflow-y-auto'>
+                            {imeState.candidates.map((candidate, i) => (
+                                <span key={i} className="text-gray-200">
+                                    <span className='text-[14px]'>{i + 1}. </span>{candidate}
+                                </span>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
         </div>
