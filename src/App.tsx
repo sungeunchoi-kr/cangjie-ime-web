@@ -237,6 +237,7 @@ function CangJieTextArea({
     const [imeState, setImeState] = useState<ImeState | null>(null)
     const [value, setValue] = useState('')
     const [cursorPosition, setCursorPosition] = useState<{ top: number; left: number } | null>(null)
+    const [isMobile] = useState(() => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent))
 
     const isImeComposing = imeState !== null
 
@@ -252,10 +253,17 @@ function CangJieTextArea({
     }, [])
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        // NOTE: event.key === 'Backspace' only handled by keydown mobile
+        if (isMobile && event.key !== 'Backspace') {
+            return
+        }
+
+        console.log('handleKeyDown: event=%O.', event)
+
         if (event.code === 'Space') {
             imeCommit(imeState)
             return
-        } else if (event.code === 'Backspace') {
+        } else if (event.code === 'Backspace' || event.key === 'Backspace') {
             if (imeState) {
                 setImeState(s => {
                     const [newState, action] = imeCompose(s, '', 'backspace')
@@ -298,6 +306,65 @@ function CangJieTextArea({
         }
     }
 
+    const handleInput = (ev: React.FormEvent<HTMLTextAreaElement>) => {
+        if (!isMobile) {
+            return
+        }
+
+        console.log('handleInput: ev=%O', ev)
+
+        // @ts-expect-error - data
+        const key = (ev.nativeEvent.data || '').toLowerCase() // 'a', ' ', '1', etc
+        // @ts-expect-error - inputType
+        const inputType = ev.nativeEvent.inputType // 'insertLineBreak'
+        console.log('handleInput: key=%O, inputType=%O', key, inputType)
+
+
+        if (key === ' ') {
+            imeCommit(imeState)
+            return
+        } else if (key === 'Backspace') { // TODO: does not work
+            if (imeState) {
+                setImeState(s => {
+                    const [newState, action] = imeCompose(s, '', 'backspace')
+                    if (action === 'commit') {
+                        imeCommit(newState)
+                    }
+                    return newState
+                })
+            } else {
+                setValue(v => v.slice(0, -1))
+            }
+            return
+        } else if (inputType === 'insertLineBreak') {
+            imeCommit(imeState)
+            setValue(v => v + '\n')
+            return
+        }
+
+        if (key && key.length === 1 && key >= 'a' && key <= 'z') {
+            const s = imeState
+            const [newState, action] = imeCompose(s, key, null)
+            if (action === 'commit') {
+                imeCommit(newState)
+                return null
+            }
+            setImeState(newState)
+            return
+        } else if (key && key.length === 1 && key >= '1' && key <= '9') {
+            const s = imeState
+            const [newState, action] = imeCompose(s, '', key as Digits)
+            if (action === 'commit') {
+                imeCommit(newState)
+                return null
+            }
+            setImeState(newState)
+            return
+        }
+    }
+
+    console.log('Render.')
+
     return (
         <div className="w-full">
             {/* <div>
@@ -307,6 +374,7 @@ function CangJieTextArea({
                 className={'relative ' + className}
                 style={{ fontSize: fontSize + 'px' }}
                 onKeyDown={handleKeyDown}
+                onInput={handleInput}
                 onSelect={handleSelect}
                 value={value}
             />
